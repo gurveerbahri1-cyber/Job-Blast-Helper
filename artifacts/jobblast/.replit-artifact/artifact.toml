@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "JobBlast"
+version = "1.0.0"
+id = "artifacts/jobblast"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25685
+
+[services.development]
+run = "pnpm --filter @workspace/jobblast run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/jobblast", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/jobblast/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25685"
+BASE_PATH = "/"

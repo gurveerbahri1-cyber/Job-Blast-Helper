@@ -3,20 +3,30 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: JobBlast API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: profile
+    description: User profile management
+  - name: jobs
+    description: Job listings and queue
+  - name: applications
+    description: Application tracking
+  - name: dashboard
+    description: Dashboard and analytics
+  - name: ai
+    description: AI tailoring
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +34,545 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ─────────────────────── PROFILE ───────────────────────
+  /profile:
+    get:
+      operationId: getProfile
+      tags: [profile]
+      summary: Get user profile
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "404":
+          description: Profile not found
+    put:
+      operationId: upsertProfile
+      tags: [profile]
+      summary: Create or update user profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileInput"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+
+  # ─────────────────────── JOB LISTINGS ───────────────────────
+  /jobs:
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      summary: List job listings
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: source
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of job listings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobListingPage"
+
+  /jobs/refresh:
+    post:
+      operationId: refreshJobs
+      tags: [jobs]
+      summary: Trigger job fetch from all sources
+      responses:
+        "200":
+          description: Refresh triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshResult"
+
+  /jobs/{id}:
+    get:
+      operationId: getJob
+      tags: [jobs]
+      summary: Get a single job listing
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Job listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobListing"
+        "404":
+          description: Not found
+
+  # ─────────────────────── REVIEW QUEUE ───────────────────────
+  /queue:
+    get:
+      operationId: getQueue
+      tags: [jobs]
+      summary: Get ranked job review queue (matched, not yet actioned)
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Ranked queue of job matches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/QueueItem"
+
+  /queue/{jobId}/skip:
+    post:
+      operationId: skipJob
+      tags: [jobs]
+      summary: Skip a job in the review queue
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Job skipped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkipResult"
+
+  # ─────────────────────── APPLICATIONS ───────────────────────
+  /applications:
+    get:
+      operationId: listApplications
+      tags: [applications]
+      summary: List all applications
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: List of applications
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplicationPage"
+    post:
+      operationId: createApplication
+      tags: [applications]
+      summary: Create a new application record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplicationInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+
+  /applications/{id}:
+    get:
+      operationId: getApplication
+      tags: [applications]
+      summary: Get a single application
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Application
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateApplication
+      tags: [applications]
+      summary: Update application status, notes, or follow-up date
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplicationPatch"
+      responses:
+        "200":
+          description: Updated application
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteApplication
+      tags: [applications]
+      summary: Delete an application
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Deleted
+
+  /applications/export:
+    get:
+      operationId: exportApplications
+      tags: [applications]
+      summary: Export all applications as JSON for CSV download
+      responses:
+        "200":
+          description: All applications as flat list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Application"
+
+  # ─────────────────────── AI TAILORING ───────────────────────
+  /ai/tailor:
+    post:
+      operationId: tailorDocuments
+      tags: [ai]
+      summary: Generate AI-tailored resume bullets and cover letter for a job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TailorInput"
+      responses:
+        "200":
+          description: Tailored documents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TailorResult"
+        "503":
+          description: AI unavailable (no API key configured)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ─────────────────────── DASHBOARD ───────────────────────
+  /dashboard/stats:
+    get:
+      operationId: getDashboardStats
+      tags: [dashboard]
+      summary: Aggregated stats for the dashboard
+      responses:
+        "200":
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
+  /dashboard/activity:
+    get:
+      operationId: getRecentActivity
+      tags: [dashboard]
+      summary: Recent application activity feed
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 10 }
+      responses:
+        "200":
+          description: Recent activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityEvent"
+
+  /dashboard/followups:
+    get:
+      operationId: getFollowUps
+      tags: [dashboard]
+      summary: Applications needing follow-up (no response after N days)
+      responses:
+        "200":
+          description: Applications needing follow-up
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Application"
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
+      properties:
+        status: { type: string }
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+
+    # ─── PROFILE ───
+    Profile:
+      type: object
+      required: [id, clerkUserId, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        clerkUserId: { type: string }
+        masterResume: { type: ["string", "null"] }
+        coverLetterTemplates: { type: ["string", "null"], description: "JSON array of templates" }
+        targetRoles: { type: ["string", "null"], description: "JSON array of role strings" }
+        targetLocations: { type: ["string", "null"], description: "JSON array of location strings" }
+        salaryFloor: { type: ["integer", "null"] }
+        excludedCompanies: { type: ["string", "null"], description: "JSON array of company names" }
+        dailyGoal: { type: integer, default: 50 }
+        followUpDays: { type: integer, default: 7 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ProfileInput:
+      type: object
+      properties:
+        masterResume: { type: string }
+        coverLetterTemplates: { type: string }
+        targetRoles: { type: string }
+        targetLocations: { type: string }
+        salaryFloor: { type: ["integer", "null"] }
+        excludedCompanies: { type: string }
+        dailyGoal: { type: integer }
+        followUpDays: { type: integer }
+
+    # ─── JOB LISTING ───
+    JobListing:
+      type: object
+      required: [id, source, title, company, url, fetchedAt]
+      properties:
+        id: { type: integer }
+        source: { type: string }
+        title: { type: string }
+        company: { type: string }
+        location: { type: ["string", "null"] }
+        url: { type: string }
+        description: { type: ["string", "null"] }
+        salaryMin: { type: ["integer", "null"] }
+        salaryMax: { type: ["integer", "null"] }
+        postedDate: { type: ["string", "null"], format: date }
+        fetchedAt: { type: string, format: date-time }
+        isExpired: { type: boolean, default: false }
+
+    JobListingPage:
+      type: object
+      required: [items, total, page, limit]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobListing"
+        total: { type: integer }
+        page: { type: integer }
+        limit: { type: integer }
+
+    RefreshResult:
+      type: object
+      required: [fetched, skipped, sources]
+      properties:
+        fetched: { type: integer }
+        skipped: { type: integer }
+        sources: { type: integer }
+
+    # ─── QUEUE ───
+    QueueItem:
+      type: object
+      required: [job, relevanceScore, reasons]
+      properties:
+        job:
+          $ref: "#/components/schemas/JobListing"
+        relevanceScore: { type: number }
+        reasons:
+          type: array
+          items: { type: string }
+        matchId: { type: integer }
+
+    SkipResult:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+
+    # ─── APPLICATION ───
+    Application:
+      type: object
+      required: [id, clerkUserId, jobListingId, status, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        clerkUserId: { type: string }
+        jobListingId: { type: integer }
+        status:
+          type: string
+          enum: [queued, approved, applied, responded, interview, offer, rejected]
+        resumeVersion: { type: ["string", "null"] }
+        coverLetterVersion: { type: ["string", "null"] }
+        notes: { type: ["string", "null"] }
+        followUpDate: { type: ["string", "null"], format: date }
+        appliedAt: { type: ["string", "null"], format: date-time }
+        lastUpdated: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        job:
+          $ref: "#/components/schemas/JobListing"
+
+    ApplicationPage:
+      type: object
+      required: [items, total, page, limit]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Application"
+        total: { type: integer }
+        page: { type: integer }
+        limit: { type: integer }
+
+    ApplicationInput:
+      type: object
+      required: [jobListingId]
+      properties:
+        jobListingId: { type: integer }
+        status:
+          type: string
+          enum: [queued, approved, applied, responded, interview, offer, rejected]
+        resumeVersion: { type: string }
+        coverLetterVersion: { type: string }
+        notes: { type: string }
+        followUpDate: { type: string, format: date }
+
+    ApplicationPatch:
+      type: object
       properties:
         status:
           type: string
-      required:
-        - status
+          enum: [queued, approved, applied, responded, interview, offer, rejected]
+        resumeVersion: { type: string }
+        coverLetterVersion: { type: string }
+        notes: { type: string }
+        followUpDate: { type: ["string", "null"], format: date }
+        appliedAt: { type: ["string", "null"], format: date-time }
 
+    # ─── AI ───
+    TailorInput:
+      type: object
+      required: [jobId]
+      properties:
+        jobId: { type: integer }
+        tone:
+          type: string
+          enum: [professional, conversational, enthusiastic]
+          default: professional
+
+    TailorResult:
+      type: object
+      required: [resumeBullets, coverLetter, jobTitle, company]
+      properties:
+        resumeBullets:
+          type: array
+          items: { type: string }
+        coverLetter: { type: string }
+        jobTitle: { type: string }
+        company: { type: string }
+        keywords:
+          type: array
+          items: { type: string }
+
+    # ─── DASHBOARD ───
+    DashboardStats:
+      type: object
+      required: [todayCount, dailyGoal, streak, totalApplications, funnel, weeklyData]
+      properties:
+        todayCount: { type: integer }
+        dailyGoal: { type: integer }
+        streak: { type: integer }
+        totalApplications: { type: integer }
+        queueSize: { type: integer }
+        followUpsDue: { type: integer }
+        funnel:
+          type: object
+          required: [applied, responded, interview, offer, rejected]
+          properties:
+            applied: { type: integer }
+            responded: { type: integer }
+            interview: { type: integer }
+            offer: { type: integer }
+            rejected: { type: integer }
+        weeklyData:
+          type: array
+          items:
+            type: object
+            required: [date, count]
+            properties:
+              date: { type: string }
+              count: { type: integer }
+
+    ActivityEvent:
+      type: object
+      required: [id, type, description, createdAt]
+      properties:
+        id: { type: integer }
+        type: { type: string }
+        description: { type: string }
+        company: { type: ["string", "null"] }
+        jobTitle: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
