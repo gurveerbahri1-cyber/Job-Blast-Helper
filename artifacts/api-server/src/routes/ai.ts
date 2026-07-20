@@ -4,14 +4,14 @@ import { db, jobListingsTable, profilesTable } from "@workspace/db";
 import { TailorDocumentsBody, TailorDocumentsResponse } from "@workspace/api-zod";
 import { requireAuth } from "../lib/requireAuth";
 import { logger } from "../lib/logger";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const router: IRouter = Router();
 
-function getAnthropicClient(): Anthropic | null {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+function getGeminiClient(): GoogleGenerativeAI | null {
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
-  return new Anthropic({ apiKey });
+  return new GoogleGenerativeAI(apiKey);
 }
 
 router.post("/ai/tailor", requireAuth, async (req: Request, res: Response): Promise<void> => {
@@ -22,10 +22,10 @@ router.post("/ai/tailor", requireAuth, async (req: Request, res: Response): Prom
     return;
   }
 
-  const anthropic = getAnthropicClient();
-  if (!anthropic) {
+  const gemini = getGeminiClient();
+  if (!gemini) {
     res.status(503).json({
-      error: "AI tailoring is not configured. Add your ANTHROPIC_API_KEY to Secrets to enable this feature.",
+      error: "AI tailoring is not configured. Add your GEMINI_API_KEY to Secrets to enable this feature.",
     });
     return;
   }
@@ -55,9 +55,9 @@ router.post("/ai/tailor", requireAuth, async (req: Request, res: Response): Prom
     enthusiastic: "energetic, passionate, emphasis on excitement for the role",
   }[tone] ?? "professional";
 
-  const systemPrompt = `You are an expert technical resume writer and career coach. Your task is to tailor resume bullets and a cover letter specifically for a job description. Be specific, use numbers and metrics where possible, and mirror the language from the JD to pass ATS screening. Tone: ${toneGuide}.`;
+  const prompt = `You are an expert technical resume writer and career coach. Your task is to tailor resume bullets and a cover letter specifically for a job description. Be specific, use numbers and metrics where possible, and mirror the language from the JD to pass ATS screening. Tone: ${toneGuide}.
 
-  const userPrompt = `Job Title: ${job.title}
+Job Title: ${job.title}
 Company: ${job.company}
 Location: ${job.location ?? "Remote"}
 
@@ -78,33 +78,30 @@ Requirements:
 - resumeBullets: 5 strong, tailored bullets that highlight relevant experience from the master resume. Each bullet starts with a strong action verb.
 - coverLetter: 3 short paragraphs (opening hook, relevant experience, closing call-to-action). Max 250 words. Do NOT use "I am excited" or "I am passionate".
 - keywords: Top 5-8 ATS keywords extracted from the job description.
-Respond with valid JSON only, no markdown.`;
+Respond with valid JSON only, no markdown code fences.`;
 
   try {
-    const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 8192,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
+    const model = gemini.getGenerativeModel({
+      model: "gemini-2.0-flash",
+      generationConfig: {
+        maxOutputTokens: 8192,
+        responseMimeType: "application/json",
+      },
     });
 
-    const content = message.content[0];
-    if (content.type !== "text") {
-      res.status(500).json({ error: "Unexpected AI response format" });
-      return;
-    }
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
 
     let parsed_result: { resumeBullets: string[]; coverLetter: string; keywords: string[] };
     try {
-      // Strip markdown code fences if present
-      const cleaned = content.text.replace(/^```json\n?/, "").replace(/\n?```$/, "").trim();
+      const cleaned = text.replace(/^```json\n?/, "").replace(/\n?```$/, "").trim();
       parsed_result = JSON.parse(cleaned);
     } catch {
       res.status(500).json({ error: "Failed to parse AI response" });
       return;
     }
 
-    const result = {
+    const response = {
       resumeBullets: parsed_result.resumeBullets ?? [],
       coverLetter: parsed_result.coverLetter ?? "",
       jobTitle: job.title,
@@ -112,9 +109,9 @@ Respond with valid JSON only, no markdown.`;
       keywords: parsed_result.keywords ?? [],
     };
 
-    res.json(TailorDocumentsResponse.parse(result));
+    res.json(TailorDocumentsResponse.parse(response));
   } catch (err) {
-    logger.error({ err }, "Anthropic API error");
+    logger.error({ err }, "Gemini API error");
     res.status(500).json({ error: "AI tailoring failed. Please try again." });
   }
 });
