@@ -4,115 +4,84 @@ import { db, jobListingsTable, profilesTable } from "@workspace/db";
 import { TailorDocumentsBody, TailorDocumentsResponse } from "@workspace/api-zod";
 import { requireAuth } from "../lib/requireAuth";
 import { logger } from "../lib/logger";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { tailorGraph } from "../lib/rag/pipeline";
 
 const router: IRouter = Router();
 
-function getGeminiClient(): GoogleGenerativeAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  return new GoogleGenerativeAI(apiKey);
-}
-
 router.post("/ai/tailor", requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as Request & { userId: string }).userId;
+
   const parsed = TailorDocumentsBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
 
-  const gemini = getGeminiClient();
-  if (!gemini) {
+  if (!process.env.GEMINI_API_KEY) {
     res.status(503).json({
-      error: "AI tailoring is not configured. Add your GEMINI_API_KEY to Secrets to enable this feature.",
+      error:
+        "AI tailoring is not configured. Add your GEMINI_API_KEY to Secrets to enable this feature.",
     });
     return;
   }
 
   const { jobId, tone = "professional" } = parsed.data;
 
-  const [job] = await db
-    .select()
-    .from(jobListingsTable)
-    .where(eq(jobListingsTable.id, jobId));
+  // Load job + profile in parallel
+  const [[job], [profile]] = await Promise.all([
+    db.select().from(jobListingsTable).where(eq(jobListingsTable.id, jobId)),
+    db.select().from(profilesTable).where(eq(profilesTable.clerkUserId, userId)),
+  ]);
 
   if (!job) {
     res.status(404).json({ error: "Job not found" });
     return;
   }
 
-  const [profile] = await db
-    .select()
-    .from(profilesTable)
-    .where(eq(profilesTable.clerkUserId, userId));
-
-  const masterResume = profile?.masterResume ?? "No resume provided. Generate generic professional bullets.";
-
-  const toneGuide = {
-    professional: "formal, concise, results-oriented",
-    conversational: "warm, direct, first-person, approachable",
-    enthusiastic: "energetic, passionate, emphasis on excitement for the role",
-  }[tone] ?? "professional";
-
-  const prompt = `You are an expert technical resume writer and career coach. Your task is to tailor resume bullets and a cover letter specifically for a job description. Be specific, use numbers and metrics where possible, and mirror the language from the JD to pass ATS screening. Tone: ${toneGuide}.
-
-Job Title: ${job.title}
-Company: ${job.company}
-Location: ${job.location ?? "Remote"}
-
-Job Description:
-${job.description?.slice(0, 3000) ?? "No description provided."}
-
-Master Resume:
-${masterResume.slice(0, 3000)}
-
-Please respond with a JSON object with this exact structure:
-{
-  "resumeBullets": ["bullet 1", "bullet 2", "bullet 3", "bullet 4", "bullet 5"],
-  "coverLetter": "Full cover letter text...",
-  "keywords": ["keyword1", "keyword2", "keyword3"]
-}
-
-Requirements:
-- resumeBullets: 5 strong, tailored bullets that highlight relevant experience from the master resume. Each bullet starts with a strong action verb.
-- coverLetter: 3 short paragraphs (opening hook, relevant experience, closing call-to-action). Max 250 words. Do NOT use "I am excited" or "I am passionate".
-- keywords: Top 5-8 ATS keywords extracted from the job description.
-Respond with valid JSON only, no markdown code fences.`;
+  const profileText =
+    profile?.masterResume ??
+    "No resume provided. Generate generic professional bullets.";
 
   try {
-    const model = gemini.getGenerativeModel({
-      model: "gemini-2.0-flash",
-      generationConfig: {
-        maxOutputTokens: 8192,
-        responseMimeType: "application/json",
-      },
+    logger.info({ jobId, tone }, "Starting RAG tailoring pipeline");
+
+    // Run the LangGraph RAG pipeline
+    const finalState = await tailorGraph.invoke({
+      jobTitle:       job.title,
+      jobDescription: job.description ?? "",
+      company:        job.company,
+      location:       job.location ?? "",
+      tone,
+      profileText,
     });
 
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-
-    let parsed_result: { resumeBullets: string[]; coverLetter: string; keywords: string[] };
-    try {
-      const cleaned = text.replace(/^```json\n?/, "").replace(/\n?```$/, "").trim();
-      parsed_result = JSON.parse(cleaned);
-    } catch {
-      res.status(500).json({ error: "Failed to parse AI response" });
+    if (!finalState.output) {
+      res.status(500).json({ error: "Pipeline produced no output" });
       return;
     }
 
-    const response = {
-      resumeBullets: parsed_result.resumeBullets ?? [],
-      coverLetter: parsed_result.coverLetter ?? "",
-      jobTitle: job.title,
-      company: job.company,
-      keywords: parsed_result.keywords ?? [],
-    };
+    logger.info(
+      {
+        jobId,
+        chunksUsed: finalState.relevantChunks.length,
+        bulletCount: finalState.output.resumeBullets.length,
+      },
+      "RAG tailoring complete"
+    );
 
-    res.json(TailorDocumentsResponse.parse(response));
+    res.json(
+      TailorDocumentsResponse.parse({
+        resumeBullets: finalState.output.resumeBullets,
+        coverLetter:   finalState.output.coverLetter,
+        jobTitle:      job.title,
+        company:       job.company,
+        keywords:      finalState.output.keywords,
+      })
+    );
   } catch (err) {
-    logger.error({ err }, "Gemini API error");
-    res.status(500).json({ error: "AI tailoring failed. Please try again." });
+    logger.error({ err }, "RAG tailoring pipeline error");
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: `AI tailoring failed: ${message}` });
   }
 });
 
